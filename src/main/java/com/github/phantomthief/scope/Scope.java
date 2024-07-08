@@ -2,6 +2,7 @@ package com.github.phantomthief.scope;
 
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.atomic.AtomicReferenceArray;
 import java.util.function.Supplier;
 
 import javax.annotation.Nonnull;
@@ -62,7 +63,11 @@ public final class Scope {
 
     private static final SubstituteThreadLocal<Scope> SCOPE_THREAD_LOCAL = MyThreadLocalFactory.create();
 
+    private static final int MAX_SCOPE_KEY_COUNT = Integer.getInteger("SCOPE_MAX_KEY_COUNT", 2048);
+
     private final ConcurrentMap<ScopeKey<?>, Holder<?>> values = new ConcurrentHashMap<>();
+
+    private final AtomicReferenceArray<Holder<?>> entries = new AtomicReferenceArray<>(MAX_SCOPE_KEY_COUNT);
 
     private final ConcurrentMap<ScopeKey<?>, Boolean> enableNullProtections = new ConcurrentHashMap<>();
 
@@ -184,6 +189,11 @@ public final class Scope {
     }
 
     public <T> void set(@Nonnull ScopeKey<T> key, T value) {
+        if (key.getIdx() < MAX_SCOPE_KEY_COUNT) {
+            setFast(key, value);
+            return;
+        }
+
         if (value != null) {
             values.put(key, new Holder<>(value));
         } else {
@@ -191,11 +201,33 @@ public final class Scope {
         }
     }
 
+    private <T> void setFast(@Nonnull ScopeKey<T> key, T value) {
+        if (value != null) {
+            entries.set(key.getIdx(), new Holder<>(value));
+        } else {
+            entries.set(key.getIdx(), new Holder<>());
+        }
+    }
+
     @SuppressWarnings("unchecked")
     public <T> T get(@Nonnull ScopeKey<T> key) {
-        Holder<T> holder = (Holder<T>) values.get(key);
-        if (holder == null) {
-            holder = (Holder<T>) values.computeIfAbsent(key, k -> new Holder<T>());
+        Holder<T> holder;
+        if (key.getIdx() < MAX_SCOPE_KEY_COUNT) {
+            holder = (Holder<T>) entries.get(key.getIdx());
+            if (holder == null) {
+                Holder<T> tmp = new Holder<>();
+                boolean success = entries.compareAndSet(key.getIdx(), null, tmp);
+                if (success) {
+                    holder = tmp;
+                } else {
+                    holder = (Holder<T>) entries.get(key.getIdx());
+                }
+            }
+        } else {
+            holder = (Holder<T>) values.get(key);
+            if (holder == null) {
+                holder = (Holder<T>) values.computeIfAbsent(key, k -> new Holder<T>());
+            }
         }
 
         return holder.getOrCreate(key, enableNullProtections);
@@ -231,17 +263,17 @@ public final class Scope {
                 return key.defaultValue();
             }
 
-            if(enableNullProtections.containsKey(key)){
+            if (enableNullProtections.containsKey(key)) {
                 return null;
             }
 
             final T v = initializer.get();
-            if(v != null){
+            if (v != null) {
                 this.value = v;
                 return v;
             }
 
-            if(key.enableNullProtection()){
+            if (key.enableNullProtection()) {
                 enableNullProtections.put(key, true);
             }
 

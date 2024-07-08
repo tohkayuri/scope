@@ -2,6 +2,7 @@ package com.github.phantomthief.scope;
 
 import static com.github.phantomthief.scope.Scope.getCurrentScope;
 
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 
 import javax.annotation.Nonnull;
@@ -19,9 +20,12 @@ import javax.annotation.Nonnull;
  */
 public final class ScopeKey<T> {
 
+    private static final AtomicInteger COUNTER = new AtomicInteger();
+
     private final T defaultValue;
     private final Supplier<T> initializer;
     private final boolean enableNullProtection;
+    private final int idx = COUNTER.getAndIncrement();
 
     private ScopeKey(T defaultValue, Supplier<T> initializer) {
         this(defaultValue, initializer, false);
@@ -121,6 +125,10 @@ public final class ScopeKey<T> {
             return defaultValue();
         }
         return currentScope.get(this);
+    }
+
+    public int getIdx() {
+        return idx;
     }
 
     Supplier<T> initializer() {
